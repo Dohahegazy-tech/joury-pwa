@@ -61,11 +61,21 @@
       return out;
     }
 
+    let pendingPushPayload = null;
+    let pushSaveConfirmed = false;
+
     function postToJouryApp(type, payload) {
       const frame = document.getElementById("appFrame");
       if (frame && frame.contentWindow) {
         frame.contentWindow.postMessage(Object.assign({ source: "joury-pwa", type }, payload || {}), "*");
+        return true;
       }
+      return false;
+    }
+
+    function retryPendingPushSave() {
+      if (!pendingPushPayload || pushSaveConfirmed) return;
+      postToJouryApp("joury-save-push-subscription", pendingPushPayload);
     }
 
     async function getPushConfig() {
@@ -93,12 +103,30 @@
       }
 
       const data = subscription.toJSON();
-      postToJouryApp("joury-save-push-subscription", {
+      pendingPushPayload = {
         subscription: {
           endpoint: data.endpoint,
           keys: { p256dh: data.keys.p256dh, auth: data.keys.auth }
         },
         platform: /iPhone|iPad|iPod/i.test(navigator.userAgent) ? "iOS" : "Android"
+      };
+      pushSaveConfirmed = false;
+
+      // The Apps Script page is inside a cross-origin iframe. Send the
+      // subscription more than once so a slow iframe/load race cannot lose it.
+      retryPendingPushSave();
+      setTimeout(retryPendingPushSave, 500);
+      setTimeout(retryPendingPushSave, 1500);
+      setTimeout(retryPendingPushSave, 3000);
+
+      await new Promise((resolve, reject) => {
+        const started = Date.now();
+        const check = () => {
+          if (pushSaveConfirmed) return resolve();
+          if (Date.now() - started > 7000) return reject(new Error("Joury could not save this phone's notification subscription. Please try again."));
+          setTimeout(check, 150);
+        };
+        check();
       });
 
       localStorage.setItem("jouryPushEnabled", "1");
@@ -124,9 +152,21 @@
     });
 
     window.addEventListener("message", e => {
-      if (e.data && e.data.source === "joury-app" && e.data.type === "joury-push-error") {
+      if (!e.data || e.data.source !== "joury-app") return;
+      if (e.data.type === "joury-push-saved") {
+        pushSaveConfirmed = true;
+        pendingPushPayload = null;
+        return;
+      }
+      if (e.data.type === "joury-push-error") {
         console.warn("Joury push subscription save failed:", e.data.message);
       }
+    });
+
+    document.getElementById("appFrame").addEventListener("load", () => {
+      // If the iframe finishes/reloads after the user tapped Enable, resend.
+      setTimeout(retryPendingPushSave, 100);
+      setTimeout(retryPendingPushSave, 700);
     });
 
     if ("serviceWorker" in navigator) {
