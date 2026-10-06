@@ -1,4 +1,4 @@
-const CACHE_NAME = "joury-pwa-shell-v1";
+const CACHE_NAME = "joury-pwa-shell-v3-push";
 const APP_SHELL = [
   "./",
   "./index.html",
@@ -19,25 +19,54 @@ self.addEventListener("install", event => {
 self.addEventListener("activate", event => {
   event.waitUntil(
     caches.keys().then(keys =>
-      Promise.all(
-        keys
-          .filter(key => key !== CACHE_NAME)
-          .map(key => caches.delete(key))
-      )
+      Promise.all(keys.filter(key => key !== CACHE_NAME).map(key => caches.delete(key)))
     ).then(() => self.clients.claim())
   );
 });
 
 self.addEventListener("fetch", event => {
   const url = new URL(event.request.url);
-
-  // Only cache the PWA shell itself.
-  // The Google Apps Script application remains online and is not cached here.
   if (url.origin === self.location.origin) {
-    event.respondWith(
-      caches.match(event.request).then(cached => {
-        return cached || fetch(event.request);
-      })
-    );
+    event.respondWith(caches.match(event.request).then(cached => cached || fetch(event.request)));
   }
+});
+
+self.addEventListener("push", event => {
+  let data = {
+    title: "Joury 💕",
+    body: "You have a Joury reminder.",
+    url: "./"
+  };
+
+  try {
+    if (event.data) data = Object.assign(data, event.data.json());
+  } catch (e) {}
+
+  const options = {
+    body: data.body,
+    icon: data.icon || "./icons/icon-192.png",
+    badge: data.badge || "./icons/icon-192.png",
+    tag: data.tag || "joury-reminder",
+    data: { url: data.url || "./" },
+    requireInteraction: false,
+    silent: false
+  };
+
+  event.waitUntil(self.registration.showNotification(data.title, options));
+});
+
+self.addEventListener("notificationclick", event => {
+  event.notification.close();
+  const target = event.notification.data && event.notification.data.url ? event.notification.data.url : "./";
+  event.waitUntil(
+    clients.matchAll({ type: "window", includeUncontrolled: true }).then(list => {
+      for (const client of list) {
+        if ("focus" in client) {
+          client.focus();
+          return client;
+        }
+      }
+      return clients.openWindow(target);
+    })
+  );
 });

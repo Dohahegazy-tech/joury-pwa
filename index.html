@@ -4,14 +4,14 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#7b2cbf">
-  <meta name="description" content="Joury Carb & Insulin Calculator">
+  <meta name="description" content="Joury Carbs & Insulin Calculation">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="Joury">
   <link rel="manifest" href="manifest.json">
   <link rel="apple-touch-icon" href="icons/icon-180.png">
-  <title>Joury Carb & Insulin Calculator</title>
+  <title>Joury Carbs & Insulin Calculation</title>
   <style>
     html, body {
       margin: 0;
@@ -32,20 +32,108 @@
   </style>
 </head>
 <body>
+  <div id="jouryPushCard" style="position:fixed;left:12px;right:12px;bottom:14px;z-index:9999;display:none;padding:12px 14px;border-radius:18px;background:rgba(255,255,255,.97);box-shadow:0 8px 30px rgba(0,0,0,.18);font-family:Arial,sans-serif;">
+    <strong style="display:block;margin-bottom:5px;color:#7b2cbf;font-size:15px;">🔔 Enable Joury Notifications</strong>
+    <small style="display:block;margin-bottom:10px;color:#555;line-height:1.35;">Allow Joury reminders on this phone, including when Joury is not open.</small>
+    <div style="display:flex;gap:8px;">
+      <button id="jouryEnablePush" style="background:#7b2cbf;color:#fff;border:0;border-radius:12px;padding:10px 14px;font-weight:700;cursor:pointer;flex:1;">Enable</button>
+      <button id="jouryLaterPush" style="background:#f0e9f7;color:#5b3b70;border:0;border-radius:12px;padding:10px 14px;font-weight:700;cursor:pointer;">Later</button>
+    </div>
+  </div>
+
   <iframe
     id="appFrame"
-    title="Joury Carb & Insulin Calculator"
+    title="Joury Carbs & Insulin Calculation"
     src="https://script.google.com/macros/s/AKfycbzDFfORJjUh_se6l3fk7VGhpne0d2XZ54iqycHwBX5VkNxZs7UQC9blAu4ZuExoaoY_/exec"
     allow="notifications; clipboard-read; clipboard-write"
     referrerpolicy="strict-origin-when-cross-origin">
   </iframe>
 
   <script>
+    const JOURY_PUSH_WORKER = "https://joury-push.doha-hegazy.workers.dev";
+
+    function b64urlToBytes(base64String) {
+      const padding = "=".repeat((4 - base64String.length % 4) % 4);
+      const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+      const raw = atob(base64);
+      const out = new Uint8Array(raw.length);
+      for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+      return out;
+    }
+
+    function postToJouryApp(type, payload) {
+      const frame = document.getElementById("appFrame");
+      if (frame && frame.contentWindow) {
+        frame.contentWindow.postMessage(Object.assign({ source: "joury-pwa", type }, payload || {}), "*");
+      }
+    }
+
+    async function getPushConfig() {
+      const response = await fetch(JOURY_PUSH_WORKER + "/config", { cache: "no-store" });
+      if (!response.ok) throw new Error("Push configuration unavailable.");
+      return response.json();
+    }
+
+    async function enableJouryPush() {
+      if (!("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window)) {
+        throw new Error("Push notifications are not supported on this device/browser.");
+      }
+      if (Notification.permission === "denied") throw new Error("Notifications are blocked for Joury in this browser settings.");
+      const permission = Notification.permission === "granted" ? "granted" : await Notification.requestPermission();
+      if (permission !== "granted") throw new Error("Notification permission was not granted.");
+
+      const cfg = await getPushConfig();
+      const registration = await navigator.serviceWorker.ready;
+      let subscription = await registration.pushManager.getSubscription();
+      if (!subscription) {
+        subscription = await registration.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: b64urlToBytes(cfg.publicKey)
+        });
+      }
+
+      const data = subscription.toJSON();
+      postToJouryApp("joury-save-push-subscription", {
+        subscription: {
+          endpoint: data.endpoint,
+          keys: { p256dh: data.keys.p256dh, auth: data.keys.auth }
+        },
+        platform: /iPhone|iPad|iPod/i.test(navigator.userAgent) ? "iOS" : "Android"
+      });
+
+      localStorage.setItem("jouryPushEnabled", "1");
+      document.getElementById("jouryPushCard").style.display = "none";
+      alert("💕 Joury notifications are enabled on this device.");
+    }
+
+    function maybeShowPushCard() {
+      const standalone = window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true;
+      if (!standalone) return;
+      if (localStorage.getItem("jouryPushEnabled") === "1") return;
+      if ("Notification" in window && Notification.permission === "denied") return;
+      document.getElementById("jouryPushCard").style.display = "block";
+    }
+
+    document.getElementById("jouryEnablePush").addEventListener("click", async () => {
+      try { await enableJouryPush(); }
+      catch (e) { alert("Could not enable notifications yet.\n\n" + (e && e.message ? e.message : e)); }
+    });
+    document.getElementById("jouryLaterPush").addEventListener("click", () => {
+      document.getElementById("jouryPushCard").style.display = "none";
+      localStorage.setItem("jouryPushLater", "1");
+    });
+
+    window.addEventListener("message", e => {
+      if (e.data && e.data.source === "joury-app" && e.data.type === "joury-push-error") {
+        console.warn("Joury push subscription save failed:", e.data.message);
+      }
+    });
+
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", () => {
-        navigator.serviceWorker.register("./sw.js").catch(err => {
-          console.warn("Joury service worker registration failed:", err);
-        });
+        navigator.serviceWorker.register("./sw.js")
+          .then(() => setTimeout(maybeShowPushCard, 1200))
+          .catch(err => console.warn("Joury service worker registration failed:", err));
       });
     }
   </script>
