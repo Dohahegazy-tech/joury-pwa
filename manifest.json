@@ -1,7 +1,7 @@
 {
-  "name": "Joury Carbs & Insulin Calculation",
+  "name": "Joury Carb & Insulin Calculator",
   "short_name": "Joury",
-  "description": "Joury Carbs & Insulin Calculation",
+  "description": "Joury Carb & Insulin Calculator",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
