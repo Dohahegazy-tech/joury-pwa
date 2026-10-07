@@ -1,4 +1,4 @@
-const CACHE_NAME = "joury-pwa-shell-v5-push";
+const CACHE_NAME = "joury-pwa-shell-v4-push";
 const APP_SHELL = [
   "./",
   "./index.html",
