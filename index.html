@@ -120,37 +120,7 @@
     }
 
 
-    let pendingPushPayload = null;
-
     let pushSaveConfirmed = false;
-
-    let jouryAppReady = false;
-
-
-    function postToJouryApp(type, payload) {
-
-      const frame = document.getElementById("appFrame");
-
-      if (frame && frame.contentWindow) {
-
-        frame.contentWindow.postMessage(Object.assign({ source: "joury-pwa", type }, payload || {}), "*");
-
-        return true;
-
-      }
-
-      return false;
-
-    }
-
-
-    function retryPendingPushSave() {
-
-      if (!pendingPushPayload || pushSaveConfirmed || !jouryAppReady) return;
-
-      postToJouryApp("joury-save-push-subscription", pendingPushPayload);
-
-    }
 
 
     async function getPushConfig() {
@@ -160,6 +130,37 @@
       if (!response.ok) throw new Error("Push configuration unavailable.");
 
       return response.json();
+
+    }
+
+
+    async function savePushSubscriptionDirect(payload) {
+
+      const response = await fetch(JOURY_PUSH_WORKER + "/subscribe", {
+
+        method: "POST",
+
+        headers: { "Content-Type": "application/json" },
+
+        cache: "no-store",
+
+        body: JSON.stringify(payload)
+
+      });
+
+      let result = null;
+
+      try { result = await response.json(); } catch (e) {}
+
+      if (!response.ok || !result || result.ok !== true) {
+
+        const msg = result && result.error ? result.error : "The Joury notification subscription could not be saved.";
+
+        throw new Error(msg);
+
+      }
+
+      return result;
 
     }
 
@@ -200,7 +201,7 @@
 
       const data = subscription.toJSON();
 
-      pendingPushPayload = {
+      const payload = {
 
         subscription: {
 
@@ -214,40 +215,10 @@
 
       };
 
-      pushSaveConfirmed = false;
 
+      await savePushSubscriptionDirect(payload);
 
-      // The Apps Script page is inside a cross-origin iframe. Send the
-
-      // subscription more than once so a slow iframe/load race cannot lose it.
-
-      retryPendingPushSave();
-
-      setTimeout(retryPendingPushSave, 500);
-
-      setTimeout(retryPendingPushSave, 1500);
-
-      setTimeout(retryPendingPushSave, 3000);
-
-
-      await new Promise((resolve, reject) => {
-
-        const started = Date.now();
-
-        const check = () => {
-
-          if (pushSaveConfirmed) return resolve();
-
-          if (Date.now() - started > 7000) return reject(new Error("Joury could not save this phone's notification subscription. Please try again."));
-
-          setTimeout(check, 150);
-
-        };
-
-        check();
-
-      });
-
+      pushSaveConfirmed = true;
 
       localStorage.setItem("jouryPushEnabled", "1");
 
@@ -290,46 +261,15 @@
     });
 
 
+    // The Apps Script iframe no longer receives the push subscription directly.
+
+    // This listener is kept only for compatibility with older cached iframe versions.
+
     window.addEventListener("message", e => {
 
       if (!e.data || e.data.source !== "joury-app") return;
 
-      if (e.data.type === "joury-app-ready") {
-
-        jouryAppReady = true;
-
-        retryPendingPushSave();
-
-        return;
-
-      }
-
-      if (e.data.type === "joury-push-saved") {
-
-        pushSaveConfirmed = true;
-
-        pendingPushPayload = null;
-
-        return;
-
-      }
-
-      if (e.data.type === "joury-push-error") {
-
-        console.warn("Joury push subscription save failed:", e.data.message);
-
-      }
-
-    });
-
-
-    document.getElementById("appFrame").addEventListener("load", () => {
-
-      // The Apps Script iframe will explicitly announce readiness.
-
-      jouryAppReady = false;
-
-      setTimeout(retryPendingPushSave, 1000);
+      if (e.data.type === "joury-push-saved") pushSaveConfirmed = true;
 
     });
 
